@@ -6,8 +6,7 @@ const CONFIG = {
   pixelsPerMinute: 1.2,
   dayStartHour: 5, 
   totalHours: 18,
-  googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY, 
-  weatherApiKey: import.meta.env.VITE_WEATHER_API_KEY, // <--- New API Key Hooked Up!
+  weatherApiKey: import.meta.env.VITE_WEATHER_API_KEY, 
   coziUrl: 'https://rest.cozi.com/api/ext/1103/f9f7020d-05c9-4720-b813-2155b4485be7/icalendar/feed/feed.ics'
 };
 
@@ -41,42 +40,31 @@ function format12Hour(timeStr) {
   return `${h}:${m.toString().padStart(2, '0')} ${ampm}`;
 }
 
-// NEW: Helper to extract coordinates from Google Maps links
 function extractCoordinates(mapsLink) {
   if (!mapsLink) return null;
-  // Looks for @lat,lon in a standard google maps URL
   const urlMatch = mapsLink.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
   if (urlMatch) return { lat: urlMatch[1], lon: urlMatch[2] };
-  
-  // Looks for a raw "lat, lon" string paste
   const rawMatch = mapsLink.match(/^(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)$/);
   if (rawMatch) return { lat: rawMatch[1], lon: rawMatch[2] };
-  
   return null;
 }
 
-// NEW: Mini-component that fetches and displays the forecast
 function WeatherBadge({ date, start, venueData }) {
   const [weatherData, setWeatherData] = useState(null);
 
   useEffect(() => {
     if (!venueData || !CONFIG.weatherApiKey) return;
-    
     const coords = extractCoordinates(venueData.mapsLink);
-    if (!coords) return; // Silent fail if no coordinates are found
+    if (!coords) return; 
 
     const fetchWeather = async () => {
       try {
         const url = `https://api.openweathermap.org/data/2.5/forecast?lat=${coords.lat}&lon=${coords.lon}&units=imperial&appid=${CONFIG.weatherApiKey}`;
         const res = await fetch(url);
         const data = await res.json();
-        
         if (!data.list) return;
 
-        // Create a target timestamp for when the game actually starts
         const targetDateTime = new Date(`${date}T${start}:00`).getTime();
-        
-        // Find the forecast chunk closest to the game time
         let closestForecast = data.list[0];
         let smallestDiff = Math.abs((closestForecast.dt * 1000) - targetDateTime);
 
@@ -89,47 +77,29 @@ function WeatherBadge({ date, start, venueData }) {
         }
 
         const iconCode = closestForecast.weather[0].icon;
-        const temp = Math.round(closestForecast.main.temp);
-        
-        // Map OpenWeather icons to clean Emojis
         const emojiMap = {
-          '01d': '☀️', '01n': '🌙',
-          '02d': '⛅', '02n': '☁️',
-          '03d': '☁️', '03n': '☁️',
-          '04d': '☁️', '04n': '☁️',
-          '09d': '🌧️', '09n': '🌧️',
-          '10d': '🌦️', '10n': '🌧️',
-          '11d': '⛈️', '11n': '⛈️',
-          '13d': '❄️', '13n': '❄️',
+          '01d': '☀️', '01n': '🌙', '02d': '⛅', '02n': '☁️',
+          '03d': '☁️', '03n': '☁️', '04d': '☁️', '04n': '☁️',
+          '09d': '🌧️', '09n': '🌧️', '10d': '🌦️', '10n': '🌧️',
+          '11d': '⛈️', '11n': '⛈️', '13d': '❄️', '13n': '❄️',
           '50d': '🌫️', '50n': '🌫️'
         };
 
-        setWeatherData({ emoji: emojiMap[iconCode] || '🌤️', temp: temp });
-      } catch (err) {
-        console.error("Weather fetch failed:", err);
-      }
+        setWeatherData({ emoji: emojiMap[iconCode] || '🌤️', temp: Math.round(closestForecast.main.temp) });
+      } catch (err) { console.error(err); }
     };
-
     fetchWeather();
   }, [date, start, venueData]);
 
   if (!weatherData) return null;
-
   return (
-    <span style={{ 
-      backgroundColor: 'rgba(255,255,255,0.2)', 
-      padding: '2px 6px', 
-      borderRadius: '12px', 
-      fontSize: '0.7rem', 
-      marginLeft: '8px',
-      fontWeight: 'bold'
-    }}>
+    <span style={{ backgroundColor: 'rgba(255,255,255,0.2)', padding: '2px 6px', borderRadius: '12px', fontSize: '0.7rem', marginLeft: '8px', fontWeight: 'bold' }}>
       {weatherData.emoji} {weatherData.temp}°
     </span>
   );
 }
 
-function Brick({ date, start, end, label, color, isCozi, isAllDay, onClick, venueName, venueData, notes, type = 'event' }) {
+function Brick({ date, start, end, label, color, isCozi, isAllDay, onClick, venueName, mapsLink, notes, type = 'event', venueData }) {
   const startMins = getMinutesFromStart(start);
   const endMins = getMinutesFromStart(end);
   const duration = Math.max(endMins - startMins, 15); 
@@ -138,10 +108,7 @@ function Brick({ date, start, end, label, color, isCozi, isAllDay, onClick, venu
   
   const isTransit = type === 'transit';
   const blockColor = isTransit ? '#bdc3c7' : (bgColors[color] || bgColors.grey);
-  
-  const backgroundStyle = isTransit 
-    ? `repeating-linear-gradient(45deg, #bdc3c7, #bdc3c7 10px, #b0b6bb 10px, #b0b6bb 20px)` 
-    : blockColor;
+  const backgroundStyle = isTransit ? `repeating-linear-gradient(45deg, #bdc3c7, #bdc3c7 10px, #b0b6bb 10px, #b0b6bb 20px)` : blockColor;
 
   return (
     <div 
@@ -162,7 +129,7 @@ function Brick({ date, start, end, label, color, isCozi, isAllDay, onClick, venu
         border: isCozi ? '1px dashed white' : 'none',
         opacity: isAllDay ? 0.85 : 1,
         transition: 'transform 0.1s',
-        zIndex: isTransit ? 5 : 10 
+        zIndex: isTransit ? 5 : 10
       }}
     >
       <div 
@@ -177,12 +144,10 @@ function Brick({ date, start, end, label, color, isCozi, isAllDay, onClick, venu
           <span style={{ fontSize: '0.75rem', opacity: 0.9, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
             {isAllDay ? 'All Day / TBD' : `${format12Hour(start)} - ${format12Hour(end)}`}
           </span>
-          {/* NEW: Weather Badge drops in here! */}
           {!isTransit && venueData && (
              <WeatherBadge date={date} start={start} venueData={venueData} />
           )}
         </div>
-        
         <div style={{ fontWeight: 'bold', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
           {isCozi ? `📅 ${label}` : label}
         </div>
@@ -194,8 +159,8 @@ function Brick({ date, start, end, label, color, isCozi, isAllDay, onClick, venu
           <div 
             onClick={(e) => {
               e.stopPropagation(); 
-              if (venueData?.mapsLink && venueData.mapsLink.trim() !== '') {
-                let urlToOpen = venueData.mapsLink.trim().replace(/^["']|["']$/g, '');
+              if (mapsLink && mapsLink.trim() !== '') {
+                let urlToOpen = mapsLink.trim().replace(/^["']|["']$/g, '');
                 if (!urlToOpen.startsWith('http') && !urlToOpen.match(/^(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)$/)) {
                   urlToOpen = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(urlToOpen)}`;
                 } else if (urlToOpen.match(/^(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)$/)) {
@@ -206,7 +171,7 @@ function Brick({ date, start, end, label, color, isCozi, isAllDay, onClick, venu
                 alert(`Whoops! No Google Maps info was saved in the database for "${venueName}".`);
               }
             }}
-            style={{ color: 'inherit', textDecoration: 'underline', cursor: 'pointer', display: 'inline-block' }}
+            style={{ color: 'white', textDecoration: 'underline', cursor: 'pointer', display: 'inline-block' }}
           >
             🗺️ {venueName}
           </div>
@@ -227,7 +192,6 @@ function App() {
   const [venueForm, setVenueForm] = useState({ id: '', name: '', mapsLink: '' });
 
   const [subEventsList, setSubEventsList] = useState([]);
-  
   const defaultDraft = { title: '', start: '08:00', end: '09:30', location: '', notes: '', travelTime: 0, arrivalBuffer: 0 };
   const [draftEvent, setDraftEvent] = useState(defaultDraft);
   const [editingId, setEditingId] = useState(null);
@@ -255,6 +219,10 @@ function App() {
         const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(targetUrl);
         const res = await fetch(proxyUrl);
         const text = await res.text();
+
+        // The Bouncer
+        if (!text.includes("BEGIN:VCALENDAR")) return;
+
         const dateMatch = currentDate.replace(/-/g, ''); 
         const targetDateNum = parseInt(dateMatch);
         const vevents = text.split("BEGIN:VEVENT");
@@ -356,7 +324,6 @@ function App() {
 
   const handleSaveEnrichment = async () => {
     if (!selectedCozi) return;
-
     let listToSave = [...subEventsList];
     if (draftEvent.title && draftEvent.title.trim() !== '') {
       const safeDraft = { ...draftEvent, travelTime: Number(draftEvent.travelTime) || 0, arrivalBuffer: Number(draftEvent.arrivalBuffer) || 0 };
@@ -374,16 +341,12 @@ function App() {
       await setDoc(doc(db, "enrichments", docId), { date: currentDate, coziRef: selectedCozi.label, subEvents: listToSave });
       setEnrichments(prev => ({ ...prev, [selectedCozi.label]: listToSave }));
       setSelectedCozi(null); 
-    } catch (error) {
-      console.error("Error saving:", error);
-      alert("Failed to save.");
-    }
+    } catch (error) { alert("Failed to save."); }
   };
 
   const handleSaveNewVenue = async () => {
     if (!venueForm.id || !venueForm.name) return alert("Please provide a short ID and a Display Name.");
     const cleanId = venueForm.id.toLowerCase().replace(/[^a-z0-9]/g, '_');
-
     try {
       await setDoc(doc(db, "venues", cleanId), { name: venueForm.name, mapsLink: venueForm.mapsLink });
       const newVenueObj = { id: cleanId, name: venueForm.name, mapsLink: venueForm.mapsLink };
@@ -420,7 +383,6 @@ function App() {
           if (subs && subs.length > 0) {
             return subs.map((sub, index) => {
               const venueData = venues.find(v => v.id === sub.location);
-              
               const totalPrepMins = (Number(sub.travelTime) || 0) + (Number(sub.arrivalBuffer) || 0);
               const transitStart = totalPrepMins > 0 ? subtractMinutes(sub.start, totalPrepMins) : null;
               
@@ -428,24 +390,18 @@ function App() {
                 <div key={`${evt.id}-sub-${index}`}>
                   {totalPrepMins > 0 && (
                     <Brick 
-                      date={currentDate}
-                      start={transitStart} 
-                      end={sub.start} 
-                      label={`🚗 Depart & Prep (${totalPrepMins}m)`} 
-                      color="grey" 
-                      isCozi={false} 
-                      isAllDay={false} 
-                      type="transit"
+                      date={currentDate} start={transitStart} end={sub.start} 
+                      label={`🚗 Depart & Prep (${totalPrepMins}m)`} color="grey" 
+                      isCozi={false} isAllDay={false} type="transit"
                       onClick={() => openModal(evt, sub)} 
                     />
                   )}
-                  
                   <Brick 
-                    date={currentDate}
-                    start={sub.start} end={sub.end} 
+                    date={currentDate} start={sub.start} end={sub.end} 
                     label={sub.title || evt.label} color={sub.color || 'blue'} 
                     isCozi={false} isAllDay={false} notes={sub.notes}
                     venueName={venueData ? venueData.name : sub.location}
+                    mapsLink={venueData ? venueData.mapsLink : null}
                     venueData={venueData} 
                     onClick={() => openModal(evt, sub)} 
                   />
@@ -455,9 +411,7 @@ function App() {
           }
           return (
             <Brick 
-              key={evt.id} 
-              date={currentDate}
-              start={evt.start} end={evt.end} label={evt.label} 
+              key={evt.id} date={currentDate} start={evt.start} end={evt.end} label={evt.label} 
               color={evt.color} isCozi={evt.isCozi} isAllDay={evt.isAllDay} 
               onClick={() => openModal(evt)} 
             />
@@ -525,7 +479,7 @@ function App() {
                   <div style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#d35400' }}>Create New Venue</div>
                   <input type="text" placeholder="Short ID (e.g. jv_field)" value={venueForm.id} onChange={e => setVenueForm({...venueForm, id: e.target.value})} style={{ padding: '6px', fontSize: '0.85rem' }} />
                   <input type="text" placeholder="Display Name (e.g. JV Baseball Field)" value={venueForm.name} onChange={e => setVenueForm({...venueForm, name: e.target.value})} style={{ padding: '6px', fontSize: '0.85rem' }} />
-                  <input type="text" placeholder="Map Link OR Coordinates (Lat, Lon)" value={venueForm.mapsLink} onChange={e => setVenueForm({...venueForm, mapsLink: e.target.value})} style={{ padding: '6px', fontSize: '0.85rem' }} />
+                  <input type="text" placeholder="Google Maps Link or Coordinates" value={venueForm.mapsLink} onChange={e => setVenueForm({...venueForm, mapsLink: e.target.value})} style={{ padding: '6px', fontSize: '0.85rem' }} />
                   <button onClick={handleSaveNewVenue} style={{ padding: '6px', backgroundColor: '#d35400', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Save Venue</button>
                 </div>
               )}
