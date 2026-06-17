@@ -7,7 +7,7 @@ const CONFIG = {
   dayStartHour: 5, 
   totalHours: 18,
   weatherApiKey: import.meta.env.VITE_WEATHER_API_KEY, 
-  coziUrl: 'https://rest.cozi.com/api/ext/1103/f9f7020d-05c9-4720-b813-2155b4485be7/icalendar/feed/feed.ics'
+  coziUrl: '/feed.ics'
 };
 
 function getMinutesFromStart(timeStr) {
@@ -181,8 +181,13 @@ function Brick({ date, start, end, label, color, isCozi, isAllDay, onClick, venu
   );
 }
 
+function getLocalDateString() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function App() {
-  const [currentDate, setCurrentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [currentDate, setCurrentDate] = useState(getLocalDateString());
   const [coziEvents, setCoziEvents] = useState([]);
   const [enrichments, setEnrichments] = useState({});
   const [selectedCozi, setSelectedCozi] = useState(null);
@@ -215,13 +220,15 @@ function App() {
       } catch (err) { console.error(err); }
 
       try {
-        const targetUrl = CONFIG.coziUrl + '?nocache=' + Date.now();
-        const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(targetUrl);
-        const res = await fetch(proxyUrl);
+        // No proxies, no internet security walls. Just reading your local file.
+        const res = await fetch(CONFIG.coziUrl);
         const text = await res.text();
 
         // The Bouncer
-        if (!text.includes("BEGIN:VCALENDAR")) return;
+        if (!text || !text.includes("BEGIN:VCALENDAR")) {
+          console.error("🚨 FILE READ ERROR: Could not read the feed.ics file. Make sure it is in the 'public' folder.");
+          return;
+        }
 
         const dateMatch = currentDate.replace(/-/g, ''); 
         const targetDateNum = parseInt(dateMatch);
@@ -265,8 +272,12 @@ function App() {
 
           if (isMatch) parsedEvents.push({ id: Math.random().toString(36).substr(2, 9), label, start, end, color: 'orange', isCozi: true, isAllDay: !hasTime });
         });
+        
+        console.log(`✅ SUCCESS: Loaded ${parsedEvents.length} events from local file.`);
         setCoziEvents(parsedEvents);
-      } catch (err) { console.error(err); }
+      } catch (err) { 
+        console.error("🚨 FATAL FETCH ERROR:", err); 
+      }
     };
     fetchEverything();
   }, [currentDate]);
