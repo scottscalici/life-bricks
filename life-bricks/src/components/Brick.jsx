@@ -51,7 +51,7 @@ function WeatherBadge({ date, start, venueData }) {
   );
 }
 
-export default function Brick({ date, start, end, label, color, isCozi, isAllDay, onClick, venueName, mapsLink, notes, type = 'event', venueData }) {
+export default function Brick({ date, start, end, label, color, isCozi, isAllDay, onClick, venueName, mapsLink, notes, type = 'event', venueData, layout }) {
   const startMins = getMinutesFromStart(start);
   const endMins = getMinutesFromStart(end);
   const duration = Math.max(endMins - startMins, 15); 
@@ -62,8 +62,8 @@ export default function Brick({ date, start, end, label, color, isCozi, isAllDay
   const blockColor = isTransit ? '#bdc3c7' : (bgColors[color] || bgColors.grey);
   const backgroundStyle = isTransit ? `repeating-linear-gradient(45deg, #bdc3c7, #bdc3c7 10px, #b0b6bb 10px, #b0b6bb 20px)` : blockColor;
 
- // If it's an all-day event, it stacks normally at the top. If it has a time, it locks to the grid.
- const containerStyle = isAllDay ? {
+  // If it's an all-day event, it stacks normally at the top. If it has a time, it locks to the grid.
+  const containerStyle = isAllDay ? {
     position: 'relative',
     width: '100%',
     background: backgroundStyle,
@@ -82,8 +82,12 @@ export default function Brick({ date, start, end, label, color, isCozi, isAllDay
     position: 'absolute',
     top: `${startMins * CONFIG.pixelsPerMinute}px`,
     height: `${duration * CONFIG.pixelsPerMinute}px`,
-    width: 'calc(100% - 60px)',
-    left: '50px',
+    // Apply layout if clustered, otherwise default to full width minus the 60px margin/padding
+    width: layout ? layout.width : 'calc(100% - 60px)',
+    // Push everything over 50px to clear the time labels, then apply the clustering percentage
+    left: layout ? `calc(50px + ${layout.left})` : '50px',
+    // Prevents columns from pushing past the right edge of the screen
+    maxWidth: 'calc(100% - 60px)',
     background: backgroundStyle,
     color: isTransit ? '#2c3e50' : 'white',
     borderRadius: '6px',

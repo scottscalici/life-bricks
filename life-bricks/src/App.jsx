@@ -184,6 +184,7 @@ function App() {
     setSubEventsList(existingSubs);
     setIsAddingVenue(false);
     setSelectedCozi(parentEvt);
+    
     if (specificSubEvent) {
       setDraftEvent({ ...defaultDraft, ...specificSubEvent });
       setEditingId(specificSubEvent.id);
@@ -191,7 +192,12 @@ function App() {
       setDraftEvent({ ...defaultDraft, ...existingSubs[0] });
       setEditingId(existingSubs[0].id);
     } else {
-      setDraftEvent({ ...defaultDraft });
+      // THE FIX: Inherit times from the parent Cozi event if they exist
+      setDraftEvent({ 
+        ...defaultDraft, 
+        start: parentEvt.start || defaultDraft.start,
+        end: parentEvt.end || defaultDraft.end
+      });
       setEditingId(null);
     }
   };
@@ -250,11 +256,17 @@ function App() {
     );
   });
 
-  // Split events into All-Day and Timed categories before rendering
   const allDayBlocks = [];
-  const timelineBlocks = [];
+  const groupedItems = [];
 
-  customEvents.forEach(evt => timelineBlocks.push(<Brick key={evt.id} date={currentDate} start={evt.start} end={evt.end} label={evt.title} color="custom" isCozi={false} isAllDay={false} notes={evt.notes} />));
+  // 1. FLATTEN & GROUP ALL EVENTS
+  customEvents.forEach(evt => {
+    groupedItems.push({
+      groupStart: evt.start,
+      groupEnd: evt.end,
+      blocks: [{ ...evt, blockType: 'custom', originalId: evt.id }]
+    });
+  });
 
   coziEvents.forEach(evt => {
     const subs = enrichments[evt.label];
@@ -262,76 +274,122 @@ function App() {
       subs.forEach((sub, index) => {
         const venueData = venues.find(v => v.id === sub.location);
         
-        // 1. Departure Math: Travel Time + Arrival Buffer + 5-min Leeway
         const travelMins = Number(sub.travelTime) || 0;
         const bufferMins = Number(sub.arrivalBuffer) || 0;
-        const leeway = travelMins > 0 ? 5 : 0; // Only add leeway if travel is required
+        const leeway = travelMins > 0 ? 5 : 0; 
         
         const totalPrepMins = travelMins + bufferMins + leeway;
         const transitStart = totalPrepMins > 0 ? subtractMinutes(sub.start, totalPrepMins) : null;
-
-        // 2. Return Math: 5-min Pack-up Leeway + Travel Time
+        
         const returnTotalMins = travelMins > 0 ? travelMins + 5 : 0;
         const returnEnd = returnTotalMins > 0 ? addMinutes(sub.end, returnTotalMins) : null;
-        
-        const subBlocks = (
-          <div key={`${evt.id}-sub-${index}`}>
-            {/* Departure Brick */}
-            {totalPrepMins > 0 && (
-              <Brick 
-                date={currentDate} 
-                start={transitStart} 
-                end={sub.start} 
-                label={`🚗 Leave by ${transitStart} (${totalPrepMins}m prep/travel)`} 
-                color="grey" 
-                isCozi={false} 
-                isAllDay={false} 
-                type="transit" 
-                onClick={() => openModal(evt, sub)} 
-              />
-            )}
-            
-            {/* Main Event Brick */}
-            <Brick 
-              date={currentDate} 
-              start={sub.start} 
-              end={sub.end} 
-              label={sub.title || evt.label} 
-              color={sub.color || 'blue'} 
-              isCozi={false} 
-              isAllDay={false} 
-              notes={sub.notes} 
-              venueName={venueData ? venueData.name : sub.location} 
-              mapsLink={venueData ? venueData.mapsLink : null} 
-              venueData={venueData} 
-              onClick={() => openModal(evt, sub)} 
-            />
 
-            {/* Return Trip Brick */}
-            {returnTotalMins > 0 && (
-              <Brick 
-                date={currentDate} 
-                start={sub.end} 
-                end={returnEnd} 
-                label={`🏠 Return Trip (Arrive ~${returnEnd})`} 
-                color="grey" 
-                isCozi={false} 
-                isAllDay={false} 
-                type="transit" 
-                onClick={() => openModal(evt, sub)} 
-              />
-            )}
-          </div>
-        );
-        timelineBlocks.push(subBlocks);
+        const blocks = [];
+
+        if (totalPrepMins > 0) {
+          blocks.push({ id: `${evt.id}-dep-${index}`, blockType: 'transit', start: transitStart, end: sub.start, label: `🚗 Leave by ${transitStart} (${totalPrepMins}m prep)`, color: 'grey', parentEvt: evt, subEvt: sub });
+        }
+        
+        blocks.push({ id: `${evt.id}-main-${index}`, blockType: 'main-sub', start: sub.start, end: sub.end, label: sub.title || evt.label, color: sub.color || 'blue', notes: sub.notes, venueName: venueData ? venueData.name : sub.location, mapsLink: venueData ? venueData.mapsLink : null, venueData, parentEvt: evt, subEvt: sub });
+        
+        if (returnTotalMins > 0) {
+          blocks.push({ id: `${evt.id}-ret-${index}`, blockType: 'transit', start: sub.end, end: returnEnd, label: `🏠 Return Trip (Arrive ~${returnEnd})`, color: 'grey', parentEvt: evt, subEvt: sub });
+        }
+
+        // Package them together based on the outermost times
+        groupedItems.push({
+          groupStart: transitStart || sub.start,
+          groupEnd: returnEnd || sub.end,
+          blocks: blocks
+        });
       });
     } else {
-      const block = <Brick key={evt.id} date={currentDate} start={evt.start} end={evt.end} label={evt.label} color={evt.color} isCozi={evt.isCozi} isAllDay={evt.isAllDay} onClick={() => openModal(evt)} />;
-      if (evt.isAllDay) allDayBlocks.push(block);
-      else timelineBlocks.push(block);
+      if (evt.isAllDay) {
+        allDayBlocks.push(<Brick key={evt.id} date={currentDate} start={evt.start} end={evt.end} label={evt.label} color={evt.color} isCozi={evt.isCozi} isAllDay={evt.isAllDay} onClick={() => openModal(evt)} />);
+      } else {
+        groupedItems.push({
+          groupStart: evt.start,
+          groupEnd: evt.end,
+          blocks: [{ ...evt, blockType: 'cozi', originalId: evt.id }]
+        });
+      }
     }
   });
-  
+
+  // 2. CALCULATE OVERLAPS ON THE ENTIRE GROUP
+  const timeToMins = (timeStr) => {
+    if (!timeStr) return 0;
+    const [h, m] = timeStr.split(':').map(Number);
+    return h * 60 + m;
+  };
+
+  // Sort groups chronologically by their earliest block
+  groupedItems.sort((a, b) => timeToMins(a.groupStart) - timeToMins(b.groupStart));
+
+  const clusters = [];
+  let currentCluster = [];
+  let clusterEnd = 0;
+
+  groupedItems.forEach(group => {
+    const startMins = timeToMins(group.groupStart);
+    const endMins = timeToMins(group.groupEnd);
+    
+    if (currentCluster.length > 0 && startMins >= clusterEnd) {
+      clusters.push(currentCluster);
+      currentCluster = [];
+      clusterEnd = 0;
+    }
+    currentCluster.push(group);
+    clusterEnd = Math.max(clusterEnd, endMins);
+  });
+  if (currentCluster.length > 0) clusters.push(currentCluster);
+
+  const timelineBlocks = [];
+
+  // 3. ASSIGN COLUMNS AND RENDER THE BRICKS
+  clusters.forEach(cluster => {
+    const columns = [];
+    
+    cluster.forEach(group => {
+      const startMins = timeToMins(group.groupStart);
+      let placed = false;
+      for (let i = 0; i < columns.length; i++) {
+        const lastGroupInCol = columns[i][columns[i].length - 1];
+        if (timeToMins(lastGroupInCol.groupEnd) <= startMins) {
+          columns[i].push(group);
+          group.column = i;
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) {
+        group.column = columns.length;
+        columns.push([group]);
+      }
+    });
+
+    const numCols = columns.length;
+    const width = 100 / numCols;
+
+    // Apply the layout to every block inside the group equally
+    cluster.forEach(group => {
+      const left = group.column * width;
+      const layoutProps = { width: `calc(${width}% - 4px)`, left: `${left}%` };
+
+      group.blocks.forEach(item => {
+        if (item.blockType === 'custom') {
+          timelineBlocks.push(<Brick key={item.originalId} date={currentDate} start={item.start} end={item.end} label={item.title} color="custom" isCozi={false} isAllDay={false} notes={item.notes} layout={layoutProps} />);
+        } else if (item.blockType === 'cozi') {
+          timelineBlocks.push(<Brick key={item.originalId} date={currentDate} start={item.start} end={item.end} label={item.label} color={item.color} isCozi={item.isCozi} isAllDay={item.isAllDay} onClick={() => openModal(item)} layout={layoutProps} />);
+        } else if (item.blockType === 'transit') {
+          timelineBlocks.push(<Brick key={item.id} date={currentDate} start={item.start} end={item.end} label={item.label} color={item.color} isCozi={false} isAllDay={false} type="transit" onClick={() => openModal(item.parentEvt, item.subEvt)} layout={layoutProps} />);
+        } else if (item.blockType === 'main-sub') {
+          timelineBlocks.push(<Brick key={item.id} date={currentDate} start={item.start} end={item.end} label={item.label} color={item.color} isCozi={false} isAllDay={false} notes={item.notes} venueName={item.venueName} mapsLink={item.mapsLink} venueData={item.venueData} onClick={() => openModal(item.parentEvt, item.subEvt)} layout={layoutProps} />);
+        }
+      });
+    });
+  });
+
   return (
     <div style={{ padding: '20px', fontFamily: 'sans-serif', backgroundColor: '#f4f4f4', minHeight: '100vh', position: 'relative' }}>
       
