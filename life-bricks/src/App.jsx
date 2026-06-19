@@ -399,10 +399,11 @@ allMainEvents.forEach((evt, i) => {
           const clickHandler = item.source === 'custom' ? () => { setCustomDraft(item.parentEvt); setIsCustomModalOpen(true); } : () => openModal(item.parentEvt, item.subEvt);
           timelineBlocks.push(<Brick key={item.id} date={currentDate} start={item.start} end={item.end} label={item.label} color={item.color} isCozi={false} isAllDay={false} type="transit" onClick={clickHandler} layout={layoutProps} />);
         } else if (item.blockType === 'main-sub') {
-          timelineBlocks.push(<Brick key={item.id} date={currentDate} start={item.start} end={item.end} label={item.label} color={item.color} isCozi={false} isAllDay={false} notes={item.notes} venueName={item.venueName} mapsLink={item.mapsLink} venueData={item.venueData} onClick={() => openModal(item.parentEvt, item.subEvt)} layout={layoutProps} />);
+          // THE FIX: Tells Cozi events to look inside venueData for the map link and name!
+          timelineBlocks.push(<Brick key={item.originalId || Math.random()} date={currentDate} start={item.start} end={item.end} label={item.label} color={item.color} isCozi={false} isAllDay={false} notes={item.notes} venueName={item.venueData ? item.venueData.name : item.location} mapsLink={item.venueData ? item.venueData.mapsLink : null} onClick={() => openModal(item.parentEvt, item.subEvt)} layout={layoutProps} />);
         }
       });
-    });
+        });
   });
 
   return (
