@@ -1,10 +1,11 @@
 export const CONFIG = {
-    pixelsPerMinute: 1.2,
-    dayStartHour: 5, 
-    totalHours: 18,
-    weatherApiKey: import.meta.env.VITE_WEATHER_API_KEY, 
-    coziUrl: '/feed.ics'
-  };
+  // If we are testing locally in Vite, use the full URL. If on Vercel, use the relative API path.
+  coziUrl: import.meta.env.DEV ? '/api/cozi' : '/api/cozi', 
+  pixelsPerMinute: 2,
+  dayStartHour: 7,
+  totalHours: 15,
+  weatherApiKey: import.meta.env.VITE_WEATHER_API_KEY || ''
+};
   
   export function getMinutesFromStart(timeStr) {
     if (!timeStr || !timeStr.includes(':')) return 0;
