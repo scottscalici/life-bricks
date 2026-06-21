@@ -1,5 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, doc, setDoc, query, where, addDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, setDoc, query, where, addDoc, updateDoc, deleteDoc, getFirestore } from 'firebase/firestore';
+import { initializeApp } from 'firebase/app';
+
+// 👉 When pasting into StackBlitz, uncomment the line below and remove the inline setup!
+// import { db } from './firebase'; 
+
+// Inline Firebase setup so this preview window doesn't crash
+let db;
+try {
+  const firebaseConfig = typeof __firebase_config !== 'undefined' 
+    ? JSON.parse(__firebase_config) 
+    : { apiKey: "demo", projectId: "demo" };
+  const app = initializeApp(firebaseConfig);
+  db = getFirestore(app);
+} catch (error) {
+  console.warn("Firebase initialization failed.", error);
+}
 
 // ============================================================================
 // 1. UTILS CONFIG (Consolidated)
