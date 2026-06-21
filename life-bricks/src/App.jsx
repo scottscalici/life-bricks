@@ -1,9 +1,340 @@
-import { useState, useEffect } from 'react'
-import { collection, getDocs, doc, setDoc, query, where, addDoc, updateDoc, deleteDoc } from 'firebase/firestore'
-import { db } from './firebase'
-import { CONFIG, addMinutes, subtractMinutes, getLocalDateString } from './utils'
-import Brick from './components/Brick'
-import { CustomBrickModal, EnrichmentModal } from './components/Modals'
+import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getFirestore, collection, getDocs, doc, setDoc, query, where, addDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+
+// ============================================================================
+// 1. UTILS & FIREBASE CONFIG (Consolidated)
+// ============================================================================
+
+// Initialize Firebase securely depending on environment
+let db;
+try {
+  const firebaseConfig = typeof __firebase_config !== 'undefined' 
+    ? JSON.parse(__firebase_config) 
+    : { apiKey: "demo", projectId: "demo" }; // Fallback for pure frontend testing
+  const app = initializeApp(firebaseConfig);
+  db = getFirestore(app);
+} catch (error) {
+  console.warn("Firebase initialization failed. Make sure your environment variables are set.", error);
+}
+
+// Replaced import.meta.env with safe browser checks to fix esbuild target warnings
+const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+const CONFIG = {
+  coziUrl: isLocal ? '/cozi-calendar.ics' : '/api/cozi', 
+  pixelsPerMinute: 2,
+  dayStartHour: 7,
+  totalHours: 15,
+  weatherApiKey: ''
+};
+
+const getLocalDateString = (d = new Date()) => {
+  const tzOffset = d.getTimezoneOffset() * 60000;
+  return new Date(d - tzOffset).toISOString().split('T')[0];
+};
+
+const addMinutes = (timeStr, minsToAdd) => {
+  if (!timeStr) return null;
+  let [h, m] = timeStr.split(':').map(Number);
+  m += minsToAdd;
+  h += Math.floor(m / 60);
+  m = m % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+};
+
+const subtractMinutes = (timeStr, minsToSub) => {
+  return addMinutes(timeStr, -minsToSub);
+};
+
+const format12Hour = (timeStr) => {
+  if (!timeStr) return '';
+  let [h, m] = timeStr.split(':').map(Number);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${String(m).padStart(2, '0')} ${ampm}`;
+};
+
+
+// ============================================================================
+// 2. BRICK COMPONENT
+// ============================================================================
+
+function Brick({ start, end, label, color, isAllDay, type, venueName, mapsLink, notes, onClick, layout }) {
+  const timeToMins = (timeStr) => {
+    if (!timeStr) return 0;
+    const [h, m] = timeStr.split(':').map(Number);
+    return h * 60 + m;
+  };
+
+  const startMins = timeToMins(start) - (CONFIG.dayStartHour * 60);
+  const durMins = timeToMins(end) - timeToMins(start);
+  const top = startMins * CONFIG.pixelsPerMinute;
+  const height = durMins * CONFIG.pixelsPerMinute;
+
+  const bg = type === 'transit' ? '#bdc3c7' : (color === 'custom' ? '#e74c3c' : '#3498db');
+
+  const style = {
+    position: isAllDay ? 'relative' : 'absolute',
+    top: isAllDay ? 'auto' : `${top}px`,
+    height: isAllDay ? 'auto' : `${Math.max(height, 20)}px`, // Ensures tiny bricks are clickable
+    left: layout?.left || '0%',
+    width: layout?.width || '100%',
+    backgroundColor: bg,
+    color: type === 'transit' ? '#2c3e50' : '#fff',
+    padding: '4px 8px',
+    borderRadius: '4px',
+    border: type === 'transit' ? 'none' : '1px solid rgba(0,0,0,0.1)',
+    overflow: 'hidden',
+    cursor: onClick ? 'pointer' : 'default',
+    boxSizing: 'border-box',
+    // Adds the striped styling to transit blocks
+    backgroundImage: type === 'transit' ? 'repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(255,255,255,0.4) 10px, rgba(255,255,255,0.4) 20px)' : 'none'
+  };
+
+  return (
+    <div style={style} onClick={onClick}>
+      {/* THE FIX: Hide the time range completely if it is a transit block! */}
+      {type !== 'transit' && !isAllDay && (
+        <div style={{ fontSize: '0.75rem', marginBottom: '2px', fontWeight: 'bold' }}>
+          {format12Hour(start)} - {format12Hour(end)}
+        </div>
+      )}
+      
+      <div style={{ fontSize: type === 'transit' ? '0.8rem' : '0.85rem', fontWeight: type === 'transit' ? 'normal' : 'bold' }}>
+        {label}
+      </div>
+      
+      {venueName && type !== 'transit' && (
+        <a
+          href={mapsLink || '#'}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          style={{ fontSize: '0.75rem', color: '#fff', textDecoration: 'underline', display: 'block', marginTop: '4px' }}
+        >
+          📍 {venueName}
+        </a>
+      )}
+
+      {/* Renders your custom notes section inside main blocks */}
+      {notes && type !== 'transit' && (
+        <div style={{ fontSize: '0.75rem', marginTop: '4px', opacity: 0.8, fontStyle: 'italic', whiteSpace: 'pre-wrap' }}>
+          📝 {notes}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ============================================================================
+// 3. MODALS
+// ============================================================================
+
+export function CustomBrickModal({ isOpen, onClose, onSave, onDelete, customDraft, setCustomDraft, venues }) {
+  if (!isOpen) return null;
+  const isEditing = !!customDraft.id;
+
+  return (
+    <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1001 }}>
+      <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '8px', width: '380px', boxShadow: '0 4px 15px rgba(0,0,0,0.2)', maxHeight: '90vh', overflowY: 'auto' }}>
+        <h3 style={{ marginTop: 0, color: '#e74c3c' }}>{isEditing ? '✎ Edit Custom Brick' : '+ Add Custom Brick'}</h3>
+        
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <input type="text" placeholder="Task Name (e.g., Make Dinner)" value={customDraft.title || ''} onChange={e => setCustomDraft({...customDraft, title: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+          
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+              <label style={{ fontSize: '0.7rem', color: '#7f8c8d' }}>Start Time</label>
+              <input type="time" value={customDraft.start || ''} onChange={e => setCustomDraft({...customDraft, start: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+              <label style={{ fontSize: '0.7rem', color: '#7f8c8d' }}>End Time</label>
+              <input type="time" value={customDraft.end || ''} onChange={e => setCustomDraft({...customDraft, end: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+            </div>
+          </div>
+
+          <div style={{ borderTop: '1px solid #eee', paddingTop: '10px', marginTop: '5px' }}>
+            <label style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#34495e', display: 'block', marginBottom: '5px' }}>Location & Travel (Optional)</label>
+            <select 
+              value={customDraft.location || ''} 
+              onChange={e => {
+                const selectedVenue = venues?.find(v => v.id === e.target.value);
+                setCustomDraft({ ...customDraft, location: e.target.value, travelTime: selectedVenue?.defaultTravelMins !== undefined ? selectedVenue.defaultTravelMins : (customDraft.travelTime || 0) });
+              }} 
+              style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', backgroundColor: 'white', marginBottom: '8px' }}
+            >
+              <option value="">-- No Venue (At Home) --</option>
+              {venues?.map(v => ( <option key={v.id} value={v.id}>{v.name}</option> ))}
+            </select>
+
+            {customDraft.location && (
+              <div style={{ backgroundColor: '#f8f9fa', padding: '10px', borderRadius: '4px', border: '1px solid #eee' }}>
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '8px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+                      <label style={{ fontSize: '0.7rem', color: '#7f8c8d' }}>Drive Time (mins)</label>
+                      <input type="number" min="0" value={customDraft.travelTime || ''} onChange={e => setCustomDraft({...customDraft, travelTime: e.target.value})} style={{ padding: '6px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+                      <label style={{ fontSize: '0.7rem', color: '#7f8c8d' }}>Arrival Buffer (mins)</label>
+                      <input type="number" min="0" value={customDraft.arrivalBuffer || ''} onChange={e => setCustomDraft({...customDraft, arrivalBuffer: e.target.value})} style={{ padding: '6px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                    </div>
+                </div>
+                
+                <label style={{ display: 'flex', alignItems: 'center', fontSize: '0.8rem', cursor: 'pointer', color: '#d35400', fontWeight: 'bold', marginTop: '5px' }}>
+                  <input type="checkbox" checked={!!customDraft.isChained} onChange={e => setCustomDraft({...customDraft, isChained: e.target.checked})} style={{ marginRight: '8px' }} />
+                  🔗 Bouncing straight here from previous event?
+                </label>
+              </div>
+            )}
+          </div>
+
+          {customDraft.location && (
+            <div style={{ backgroundColor: customDraft.hasReturnErrand ? '#e8f4f8' : '#f4f6f7', padding: '10px', borderRadius: '4px', border: customDraft.hasReturnErrand ? '1px solid #3498db' : '1px solid #ddd' }}>
+              <label style={{ display: 'flex', alignItems: 'center', fontSize: '0.85rem', cursor: 'pointer', fontWeight: customDraft.hasReturnErrand ? 'bold' : 'normal', color: '#2c3e50' }}>
+                <input type="checkbox" checked={!!customDraft.hasReturnErrand} onChange={e => setCustomDraft({...customDraft, hasReturnErrand: e.target.checked})} style={{ marginRight: '8px', transform: 'scale(1.2)' }} />
+                🛑 Stop for an errand on the way home?
+              </label>
+              {customDraft.hasReturnErrand && (
+                <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                  <input type="text" placeholder="Where? (e.g. Kroger)" value={customDraft.errandTitle || ''} onChange={e => setCustomDraft({...customDraft, errandTitle: e.target.value})} style={{ flex: 2, padding: '6px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '0.8rem' }} />
+                  <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+                     <input type="number" placeholder="Mins" value={customDraft.errandDuration || ''} onChange={e => setCustomDraft({...customDraft, errandDuration: e.target.value})} style={{ padding: '6px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '0.8rem' }} />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          <textarea placeholder="Notes / Prep details" value={customDraft.notes || ''} onChange={e => setCustomDraft({...customDraft, notes: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', minHeight: '50px', marginTop: '5px' }} />
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '20px' }}>
+          {isEditing ? <button onClick={() => onDelete(customDraft.id)} style={{ padding: '8px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer', backgroundColor: '#fff', color: '#e74c3c', textDecoration: 'underline', fontSize: '0.85rem' }}>Delete</button> : <div style={{ width: '50px' }}></div>}
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button onClick={onClose} style={{ padding: '8px 15px', border: 'none', borderRadius: '4px', cursor: 'pointer', backgroundColor: '#ecf0f1' }}>Cancel</button>
+            <button onClick={onSave} style={{ padding: '8px 15px', border: 'none', borderRadius: '4px', cursor: 'pointer', backgroundColor: '#e74c3c', color: 'white', fontWeight: 'bold' }}>{isEditing ? 'Save Edits' : 'Save Brick'}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function EnrichmentModal({ 
+  selectedCozi, onClose, subEventsList, editingId, draftEvent, setDraftEvent, handleAddDraftToList, handleEditFromList, handleRemoveFromList, isAddingVenue, setIsAddingVenue, venues, venueForm, setVenueForm, handleSaveNewVenue, handleSaveEnrichment 
+}) {
+  if (!selectedCozi) return null;
+
+  return (
+    <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+      <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '8px', width: '450px', boxShadow: '0 4px 15px rgba(0,0,0,0.2)', maxHeight: '90vh', overflowY: 'auto' }}>
+        <h3 style={{ marginTop: 0, color: '#3498db' }}>Schedule Specifics</h3>
+        <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '20px' }}>For: <strong>{selectedCozi.label}</strong></p>
+        
+        {subEventsList.length > 0 && (
+          <div style={{ marginBottom: '20px', padding: '10px', backgroundColor: '#f8f9fa', borderRadius: '6px' }}>
+            <h4 style={{ margin: '0 0 10px 0', fontSize: '0.9rem' }}>Attached Events:</h4>
+            {subEventsList.map((ev, idx) => (
+              <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee', paddingBottom: '5px', marginBottom: '5px' }}>
+                <div style={{ fontSize: '0.85rem' }}><strong>{format12Hour(ev.start)} - {format12Hour(ev.end)}</strong>: {ev.title}</div>
+                <div>
+                  <button onClick={() => handleEditFromList(ev)} style={{ color: '#3498db', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', marginRight: '5px' }}>✎</button>
+                  <button onClick={() => handleRemoveFromList(ev.id)} style={{ color: 'red', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem' }}>×</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', borderTop: '2px dashed #ccc', paddingTop: '15px' }}>
+          <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: editingId ? '#3498db' : '#888' }}>{editingId ? '✎ Editing Event' : '+ Add New Sub-Event'}</div>
+          <input type="text" placeholder="Specific Event (e.g. Game 1 vs Tigers)" value={draftEvent.title || ''} onChange={e => setDraftEvent({...draftEvent, title: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+          
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <input type="time" value={draftEvent.start || ''} onChange={e => setDraftEvent({...draftEvent, start: e.target.value})} style={{ flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+            <input type="time" value={draftEvent.end || ''} onChange={e => setDraftEvent({...draftEvent, end: e.target.value})} style={{ flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+          </div>
+
+          <div style={{ display: 'flex', gap: '5px' }}>
+            <select 
+              value={draftEvent.location || ''} 
+              onChange={e => {
+                const selectedVenue = venues.find(v => v.id === e.target.value);
+                setDraftEvent({ ...draftEvent, location: e.target.value, travelTime: selectedVenue?.defaultTravelMins !== undefined ? selectedVenue.defaultTravelMins : draftEvent.travelTime });
+              }} 
+              style={{ flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid #ccc', backgroundColor: 'white' }}
+            >
+              <option value="">-- Select a Venue --</option>
+              {venues.map(v => ( <option key={v.id} value={v.id}>{v.name}</option> ))}
+            </select>
+            <button onClick={() => setIsAddingVenue(!isAddingVenue)} style={{ padding: '0 10px', backgroundColor: isAddingVenue ? '#95a5a6' : '#e67e22', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
+              {isAddingVenue ? 'Cancel' : '+ New'}
+            </button>
+          </div>
+
+          <div style={{ backgroundColor: '#f8f9fa', padding: '10px', borderRadius: '4px', border: '1px solid #eee' }}>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+                  <label style={{ fontSize: '0.7rem', color: '#7f8c8d', marginBottom: '2px' }}>Drive Time (mins)</label>
+                  <input type="number" min="0" value={draftEvent.travelTime || ''} onChange={e => setDraftEvent({...draftEvent, travelTime: e.target.value})} style={{ padding: '6px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+                  <label style={{ fontSize: '0.7rem', color: '#7f8c8d', marginBottom: '2px' }}>Arrival Buffer (mins)</label>
+                  <input type="number" min="0" value={draftEvent.arrivalBuffer || ''} onChange={e => setDraftEvent({...draftEvent, arrivalBuffer: e.target.value})} style={{ padding: '6px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                </div>
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', fontSize: '0.8rem', cursor: 'pointer', color: '#d35400', fontWeight: 'bold', marginTop: '8px' }}>
+              <input type="checkbox" checked={!!draftEvent.isChained} onChange={e => setDraftEvent({...draftEvent, isChained: e.target.checked})} style={{ marginRight: '8px' }} />
+              🔗 Bouncing straight here from previous event?
+            </label>
+          </div>
+
+          {draftEvent.location && (
+            <div style={{ backgroundColor: draftEvent.hasReturnErrand ? '#e8f4f8' : '#f4f6f7', padding: '10px', borderRadius: '4px', border: draftEvent.hasReturnErrand ? '1px solid #3498db' : '1px solid #ddd', marginTop: '4px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', fontSize: '0.85rem', cursor: 'pointer', fontWeight: draftEvent.hasReturnErrand ? 'bold' : 'normal', color: '#2c3e50' }}>
+                <input type="checkbox" checked={!!draftEvent.hasReturnErrand} onChange={e => setDraftEvent({...draftEvent, hasReturnErrand: e.target.checked})} style={{ marginRight: '8px', transform: 'scale(1.2)' }} />
+                🛑 Stop for an errand on the way home?
+              </label>
+              {draftEvent.hasReturnErrand && (
+                <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                  <input type="text" placeholder="Where? (e.g. Kroger)" value={draftEvent.errandTitle || ''} onChange={e => setDraftEvent({...draftEvent, errandTitle: e.target.value})} style={{ flex: 2, padding: '6px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '0.8rem' }} />
+                  <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+                     <input type="number" placeholder="Mins" value={draftEvent.errandDuration || ''} onChange={e => setDraftEvent({...draftEvent, errandDuration: e.target.value})} style={{ padding: '6px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '0.8rem' }} />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {isAddingVenue && (
+            <div style={{ padding: '10px', backgroundColor: '#fdf3e7', borderRadius: '6px', border: '1px solid #f39c12', display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+              <div style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#d35400' }}>Create New Venue</div>
+              <input type="text" placeholder="Short ID (e.g. jv_field)" value={venueForm.id} onChange={e => setVenueForm({...venueForm, id: e.target.value})} style={{ padding: '6px', fontSize: '0.85rem', borderRadius: '4px', border: '1px solid #ccc' }} />
+              <input type="text" placeholder="Display Name (e.g. JV Baseball Field)" value={venueForm.name} onChange={e => setVenueForm({...venueForm, name: e.target.value})} style={{ padding: '6px', fontSize: '0.85rem', borderRadius: '4px', border: '1px solid #ccc' }} />
+              <input type="text" placeholder="Google Maps Link or Coordinates" value={venueForm.mapsLink} onChange={e => setVenueForm({...venueForm, mapsLink: e.target.value})} style={{ padding: '6px', fontSize: '0.85rem', borderRadius: '4px', border: '1px solid #ccc' }} />
+              <input type="number" placeholder="Default Drive Time (mins)" value={venueForm.defaultTravelMins || ''} onChange={e => setVenueForm({...venueForm, defaultTravelMins: e.target.value})} style={{ padding: '6px', fontSize: '0.85rem', borderRadius: '4px', border: '1px solid #ccc' }} />
+              <button onClick={handleSaveNewVenue} style={{ padding: '6px', backgroundColor: '#d35400', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', marginTop: '4px' }}>Save Venue</button>
+            </div>
+          )}
+
+          <textarea placeholder="Notes (e.g. Wear white jerseys)" value={draftEvent.notes || ''} onChange={e => setDraftEvent({...draftEvent, notes: e.target.value})} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', minHeight: '50px', fontFamily: 'inherit', marginTop: '8px' }} />
+          <button onClick={handleAddDraftToList} style={{ padding: '8px', backgroundColor: editingId ? '#3498db' : '#2ecc71', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', marginTop: '10px' }}>{editingId ? 'Update Event ✓' : 'Add to List ↓'}</button>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '25px' }}>
+          <button onClick={onClose} style={{ padding: '8px 15px', border: 'none', borderRadius: '4px', cursor: 'pointer', backgroundColor: '#ecf0f1' }}>Close</button>
+          <button onClick={handleSaveEnrichment} style={{ padding: '8px 15px', border: 'none', borderRadius: '4px', cursor: 'pointer', backgroundColor: '#3498db', color: 'white', fontWeight: 'bold' }}>Save Dashboard Updates</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================================
+// 4. MAIN APP COMPONENT
+// ============================================================================
 
 function App() {
   const [currentDate, setCurrentDate] = useState(getLocalDateString());
@@ -31,6 +362,8 @@ function App() {
   };
 
   useEffect(() => {
+    if (!db) return; // Prevent crashes if Firebase is uninitialized
+    
     const fetchEverything = async () => {
       try {
         const venueSnap = await getDocs(collection(db, "venues"));
@@ -252,101 +585,93 @@ function App() {
     return h * 60 + m;
   };
 
-// THE NEW LOOK-AHEAD CHAINING ENGINE
-const allDayBlocks = [];
-const allMainEvents = [];
+  const allDayBlocks = [];
+  const allMainEvents = [];
 
-// Step 1: Flatten everything AND fix missing titles
-customEvents.forEach(evt => allMainEvents.push({ ...evt, label: evt.title, source: 'custom' }));
+  customEvents.forEach(evt => allMainEvents.push({ ...evt, label: evt.title, source: 'custom' }));
 
-coziEvents.forEach(evt => {
-  const subs = enrichments[evt.label];
-  if (subs && subs.length > 0) {
-    // THE FIX: Properly map the title so it doesn't render blank!
-    subs.forEach((sub, index) => allMainEvents.push({ ...sub, label: sub.title || evt.label, source: 'cozi', parentEvt: evt, originalId: `${evt.id}-${index}` }));
-  } else {
-    if (evt.isAllDay) {
-      allDayBlocks.push(<Brick key={evt.id} date={currentDate} start={evt.start} end={evt.end} label={evt.label} color={evt.color} isCozi={evt.isCozi} isAllDay={evt.isAllDay} onClick={() => openModal(evt)} />);
+  coziEvents.forEach(evt => {
+    const subs = enrichments[evt.label];
+    if (subs && subs.length > 0) {
+      subs.forEach((sub, index) => allMainEvents.push({ ...sub, label: sub.title || evt.label, source: 'cozi', parentEvt: evt, originalId: `${evt.id}-${index}` }));
     } else {
-      allMainEvents.push({ ...evt, source: 'cozi', originalId: evt.id });
+      if (evt.isAllDay) {
+        allDayBlocks.push(<Brick key={evt.id} date={currentDate} start={evt.start} end={evt.end} label={evt.label} color={evt.color} isCozi={evt.isCozi} isAllDay={evt.isAllDay} onClick={() => openModal(evt)} />);
+      } else {
+        allMainEvents.push({ ...evt, source: 'cozi', originalId: evt.id });
+      }
     }
-  }
-});
-
-// Step 2: Sort Chronologically
-allMainEvents.sort((a, b) => timeToMins(a.start) - timeToMins(b.start));
-
-// Step 3: Look Ahead & Build Smart Groups
-const groupedItems = [];
-
-allMainEvents.forEach((evt, i) => {
-  if (evt.source === 'cozi' && !evt.parentEvt) {
-     groupedItems.push({ groupStart: evt.start, groupEnd: evt.end, blocks: [{ ...evt, blockType: 'cozi', originalId: evt.originalId }] });
-     return;
-  }
-
-  const venueData = venues.find(v => v.id === evt.location);
-  const travelMins = Number(evt.travelTime) || 0;
-  const bufferMins = Number(evt.arrivalBuffer) || 0;
-  const leeway = travelMins > 0 ? 5 : 0;
-  const totalPrepMins = travelMins + bufferMins + leeway;
-  const transitStart = totalPrepMins > 0 ? subtractMinutes(evt.start, totalPrepMins) : null;
-
-  const isChainedFromPrev = evt.isChained;
-  const nextEvt = allMainEvents[i + 1];
-  const isChainedToNext = nextEvt ? nextEvt.isChained : false;
-
-  let returnTotalMins = travelMins > 0 ? travelMins + 5 : 0;
-  if (evt.hasReturnErrand) returnTotalMins += (Number(evt.errandDuration) || 0);
-  const returnEnd = returnTotalMins > 0 ? addMinutes(evt.end, returnTotalMins) : null;
-
-  const blocks = [];
-
-  // 1. Departure Block
-  if (totalPrepMins > 0) {
-    if (isChainedFromPrev) {
-       blocks.push({ id: `${evt.id || evt.originalId}-dep`, source: evt.source, blockType: 'transit', start: transitStart, end: evt.start, label: `🚗 Drive to ${venueData ? venueData.name : 'next'} (${travelMins}m)`, color: 'grey', parentEvt: evt.parentEvt || evt, subEvt: evt.source === 'cozi' ? evt : null });
-    } else {
-       blocks.push({ id: `${evt.id || evt.originalId}-dep`, source: evt.source, blockType: 'transit', start: transitStart, end: evt.start, label: `🚗 Leave by ${transitStart}`, color: 'grey', parentEvt: evt.parentEvt || evt, subEvt: evt.source === 'cozi' ? evt : null });
-    }
-  }
-
-  // 2. Main Event Block
-  blocks.push({ ...evt, blockType: evt.source === 'custom' ? 'custom' : 'main-sub', venueData });
-
-  // 3. Gap Link OR Return Trip
-  let blockEndStr = evt.end;
-
-  if (isChainedToNext) {
-    // Calculate when the next event's prep actually begins
-    const nextTravelMins = Number(nextEvt.travelTime) || 0;
-    const nextBufferMins = Number(nextEvt.arrivalBuffer) || 0;
-    const nextLeeway = nextTravelMins > 0 ? 5 : 0;
-    const nextTotalPrep = nextTravelMins + nextBufferMins + nextLeeway;
-    const nextTransitStart = nextTotalPrep > 0 ? subtractMinutes(nextEvt.start, nextTotalPrep) : nextEvt.start;
-
-    // THE FIX: Detect if there is a gap between this event and the next one
-    const gapMins = timeToMins(nextTransitStart) - timeToMins(evt.end);
-
-    if (gapMins > 0) {
-      const isSameVenue = evt.location === nextEvt.location && evt.location !== '';
-      const gapLabel = isSameVenue ? `⏳ Remain at venue` : `⏳ Free time / Hang out`;
-      
-      blocks.push({ id: `${evt.id || evt.originalId}-gap`, source: evt.source, blockType: 'transit', start: evt.end, end: nextTransitStart, label: gapLabel, color: 'grey', parentEvt: evt.parentEvt || evt, subEvt: evt.source === 'cozi' ? evt : null });
-      blockEndStr = nextTransitStart;
-    }
-  } else if (returnTotalMins > 0) {
-    const returnLabel = evt.hasReturnErrand ? `🛑 ${evt.errandTitle || 'Errand'} + 🏠 Return (~${returnEnd})` : `🏠 Return (~${returnEnd})`;
-    blocks.push({ id: `${evt.id || evt.originalId}-ret`, source: evt.source, blockType: 'transit', start: evt.end, end: returnEnd, label: returnLabel, color: 'grey', parentEvt: evt.parentEvt || evt, subEvt: evt.source === 'cozi' ? evt : null });
-    blockEndStr = returnEnd;
-  }
-
-  groupedItems.push({
-    groupStart: transitStart || evt.start,
-    groupEnd: blockEndStr,
-    blocks: blocks
   });
-});
+
+  allMainEvents.sort((a, b) => timeToMins(a.start) - timeToMins(b.start));
+
+  const groupedItems = [];
+  
+  allMainEvents.forEach((evt, i) => {
+    if (evt.source === 'cozi' && !evt.parentEvt) {
+       groupedItems.push({ groupStart: evt.start, groupEnd: evt.end, blocks: [{ ...evt, blockType: 'cozi', originalId: evt.originalId }] });
+       return;
+    }
+
+    const venueData = venues.find(v => v.id === evt.location);
+    const travelMins = Number(evt.travelTime) || 0;
+    const bufferMins = Number(evt.arrivalBuffer) || 0;
+    const leeway = travelMins > 0 ? 5 : 0;
+    const totalPrepMins = travelMins + bufferMins + leeway;
+    const transitStart = totalPrepMins > 0 ? subtractMinutes(evt.start, totalPrepMins) : null;
+
+    const isChainedFromPrev = evt.isChained;
+    const nextEvt = allMainEvents[i + 1];
+    const isChainedToNext = nextEvt ? nextEvt.isChained : false;
+
+    let returnTotalMins = travelMins > 0 ? travelMins + 5 : 0;
+    if (evt.hasReturnErrand) returnTotalMins += (Number(evt.errandDuration) || 0);
+    const returnEnd = returnTotalMins > 0 ? addMinutes(evt.end, returnTotalMins) : null;
+
+    const blocks = [];
+
+    // 1. Departure Block
+    if (totalPrepMins > 0) {
+      if (isChainedFromPrev) {
+         blocks.push({ id: `${evt.id || evt.originalId}-dep`, source: evt.source, blockType: 'transit', start: transitStart, end: evt.start, label: `Drive to ${venueData ? venueData.name : 'next'} (travel time: ${travelMins} mins)`, color: 'grey', parentEvt: evt.parentEvt || evt, subEvt: evt.source === 'cozi' ? evt : null });
+      } else {
+         blocks.push({ id: `${evt.id || evt.originalId}-dep`, source: evt.source, blockType: 'transit', start: transitStart, end: evt.start, label: `Leave by ${format12Hour(transitStart)} (travel time: ${travelMins} mins)`, color: 'grey', parentEvt: evt.parentEvt || evt, subEvt: evt.source === 'cozi' ? evt : null });
+      }
+    }
+
+    blocks.push({ ...evt, blockType: evt.source === 'custom' ? 'custom' : 'main-sub', venueData });
+
+    // 3. Gap Link OR Return Trip
+    let blockEndStr = evt.end;
+
+    if (isChainedToNext) {
+      const nextTravelMins = Number(nextEvt.travelTime) || 0;
+      const nextBufferMins = Number(nextEvt.arrivalBuffer) || 0;
+      const nextLeeway = nextTravelMins > 0 ? 5 : 0;
+      const nextTotalPrep = nextTravelMins + nextBufferMins + nextLeeway;
+      const nextTransitStart = nextTotalPrep > 0 ? subtractMinutes(nextEvt.start, nextTotalPrep) : nextEvt.start;
+
+      const gapMins = timeToMins(nextTransitStart) - timeToMins(evt.end);
+
+      if (gapMins > 0) {
+        const isSameVenue = evt.location === nextEvt.location && evt.location !== '';
+        const gapLabel = isSameVenue ? `Remain at venue` : `Free time / Hang out`;
+        
+        blocks.push({ id: `${evt.id || evt.originalId}-gap`, source: evt.source, blockType: 'transit', start: evt.end, end: nextTransitStart, label: gapLabel, color: 'grey', parentEvt: evt.parentEvt || evt, subEvt: evt.source === 'cozi' ? evt : null });
+        blockEndStr = nextTransitStart;
+      }
+    } else if (returnTotalMins > 0) {
+      const returnLabel = evt.hasReturnErrand ? `🛑 ${evt.errandTitle || 'Errand'} + ETA: ${format12Hour(returnEnd)}` : `ETA: ${format12Hour(returnEnd)}`;
+      blocks.push({ id: `${evt.id || evt.originalId}-ret`, source: evt.source, blockType: 'transit', start: evt.end, end: returnEnd, label: returnLabel, color: 'grey', parentEvt: evt.parentEvt || evt, subEvt: evt.source === 'cozi' ? evt : null });
+      blockEndStr = returnEnd;
+    }
+
+    groupedItems.push({
+      groupStart: transitStart || evt.start,
+      groupEnd: blockEndStr,
+      blocks: blocks
+    });
+  });
 
   const clusters = [];
   let currentCluster = [];
@@ -399,11 +724,10 @@ allMainEvents.forEach((evt, i) => {
           const clickHandler = item.source === 'custom' ? () => { setCustomDraft(item.parentEvt); setIsCustomModalOpen(true); } : () => openModal(item.parentEvt, item.subEvt);
           timelineBlocks.push(<Brick key={item.id} date={currentDate} start={item.start} end={item.end} label={item.label} color={item.color} isCozi={false} isAllDay={false} type="transit" onClick={clickHandler} layout={layoutProps} />);
         } else if (item.blockType === 'main-sub') {
-          // THE FIX: Tells Cozi events to look inside venueData for the map link and name!
           timelineBlocks.push(<Brick key={item.originalId || Math.random()} date={currentDate} start={item.start} end={item.end} label={item.label} color={item.color} isCozi={false} isAllDay={false} notes={item.notes} venueName={item.venueData ? item.venueData.name : item.location} mapsLink={item.venueData ? item.venueData.mapsLink : null} onClick={() => openModal(item.parentEvt, item.subEvt)} layout={layoutProps} />);
         }
       });
-        });
+    });
   });
 
   return (
