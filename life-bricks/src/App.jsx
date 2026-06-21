@@ -2,10 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { collection, getDocs, doc, setDoc, query, where, addDoc, updateDoc, deleteDoc, getFirestore } from 'firebase/firestore';
 import { initializeApp } from 'firebase/app';
 
-// 👉 When pasting into StackBlitz, uncomment the line below and remove the inline setup!
+// ============================================================================
+// 👉 FIREBASE CONNECTION
+// ============================================================================
+// To fix the preview window crash, we have temporarily inlined the database connection.
+// IMPORTANT: When pasting this back into StackBlitz, DELETE lines 13-22 and uncomment line 11!
 // import { db } from './firebase'; 
 
-// Inline Firebase setup so this preview window doesn't crash
 let db;
 try {
   const firebaseConfig = typeof __firebase_config !== 'undefined' 
