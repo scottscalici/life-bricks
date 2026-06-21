@@ -2,20 +2,21 @@ import React, { useState, useEffect } from 'react';
 import { collection, getDocs, doc, setDoc, query, where, addDoc, updateDoc, deleteDoc, getFirestore } from 'firebase/firestore';
 import { initializeApp } from 'firebase/app';
 
-// 👉 UNCOMMENT THE LINE BELOW when pasting into StackBlitz/Vercel!
+// 👉 YOUR ACTUAL DATABASE CONNECTION:
+// IMPORTANT: UNCOMMENT the line below when you paste this into StackBlitz/Vercel!
 // import { db } from './firebase'; 
 
-// 👉 DELETE THIS TEMPORARY BLOCK when pasting into StackBlitz!
+// 👇👇👇 DELETE THIS TEMPORARY BLOCK WHEN PASTING INTO STACKBLITZ 👇👇👇
+// (This is only here so the preview window doesn't crash from missing files)
 let db;
 try {
-  const firebaseConfig = typeof __firebase_config !== 'undefined' 
-    ? JSON.parse(__firebase_config) 
-    : { apiKey: "demo", projectId: "demo" };
+  const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { apiKey: "demo", projectId: "demo" };
   const app = initializeApp(firebaseConfig);
   db = getFirestore(app);
 } catch (error) {
   console.warn("Firebase initialization failed.", error);
 }
+// 👆👆👆 DELETE THIS TEMPORARY BLOCK WHEN PASTING INTO STACKBLITZ 👆👆👆
 
 // ============================================================================
 // 1. UTILS CONFIG (Consolidated)
