@@ -1,24 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, doc, setDoc, query, where, addDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, setDoc, query, where, addDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 
 // ============================================================================
-// 1. UTILS & FIREBASE CONFIG (Consolidated)
+// 1. UTILS CONFIG (Consolidated)
 // ============================================================================
 
-// Initialize Firebase securely depending on environment
-let db;
-try {
-  const firebaseConfig = typeof __firebase_config !== 'undefined' 
-    ? JSON.parse(__firebase_config) 
-    : { apiKey: "demo", projectId: "demo" }; // Fallback for pure frontend testing
-  const app = initializeApp(firebaseConfig);
-  db = getFirestore(app);
-} catch (error) {
-  console.warn("Firebase initialization failed. Make sure your environment variables are set.", error);
-}
-
-// Replaced import.meta.env with safe browser checks to fix esbuild target warnings
 const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
 const CONFIG = {
@@ -77,7 +63,7 @@ function Brick({ start, end, label, color, isAllDay, type, venueName, mapsLink, 
   const style = {
     position: isAllDay ? 'relative' : 'absolute',
     top: isAllDay ? 'auto' : `${top}px`,
-    height: isAllDay ? 'auto' : `${Math.max(height, 20)}px`, // Ensures tiny bricks are clickable
+    height: isAllDay ? 'auto' : `${Math.max(height, 20)}px`, 
     left: layout?.left || '0%',
     width: layout?.width || '100%',
     backgroundColor: bg,
@@ -88,13 +74,11 @@ function Brick({ start, end, label, color, isAllDay, type, venueName, mapsLink, 
     overflow: 'hidden',
     cursor: onClick ? 'pointer' : 'default',
     boxSizing: 'border-box',
-    // Adds the striped styling to transit blocks
     backgroundImage: type === 'transit' ? 'repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(255,255,255,0.4) 10px, rgba(255,255,255,0.4) 20px)' : 'none'
   };
 
   return (
     <div style={style} onClick={onClick}>
-      {/* THE FIX: Hide the time range completely if it is a transit block! */}
       {type !== 'transit' && !isAllDay && (
         <div style={{ fontSize: '0.75rem', marginBottom: '2px', fontWeight: 'bold' }}>
           {format12Hour(start)} - {format12Hour(end)}
@@ -117,7 +101,6 @@ function Brick({ start, end, label, color, isAllDay, type, venueName, mapsLink, 
         </a>
       )}
 
-      {/* Renders your custom notes section inside main blocks */}
       {notes && type !== 'transit' && (
         <div style={{ fontSize: '0.75rem', marginTop: '4px', opacity: 0.8, fontStyle: 'italic', whiteSpace: 'pre-wrap' }}>
           📝 {notes}
