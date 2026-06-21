@@ -1,22 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, doc, setDoc, query, where, addDoc, updateDoc, deleteDoc, getFirestore } from 'firebase/firestore';
-import { initializeApp } from 'firebase/app';
+import { collection, getDocs, doc, setDoc, query, where, addDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 
-// 👉 YOUR ACTUAL DATABASE CONNECTION:
-// IMPORTANT: UNCOMMENT the line below when you paste this into StackBlitz/Vercel!
+// --------------------------------------------------------------------------
+// 🛑 STACKBLITZ / VERCEL SETUP INSTRUCTIONS 🛑
+// 1. Uncomment the import line below to connect to your real Firebase database:
 // import { db } from './firebase'; 
-
-// 👇👇👇 DELETE THIS TEMPORARY BLOCK WHEN PASTING INTO STACKBLITZ 👇👇👇
-// (This is only here so the preview window doesn't crash from missing files)
-let db;
-try {
-  const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { apiKey: "demo", projectId: "demo" };
-  const app = initializeApp(firebaseConfig);
-  db = getFirestore(app);
-} catch (error) {
-  console.warn("Firebase initialization failed.", error);
-}
-// 👆👆👆 DELETE THIS TEMPORARY BLOCK WHEN PASTING INTO STACKBLITZ 👆👆👆
+//
+// 2. Delete the dummy "const db = null;" line right below it!
+// --------------------------------------------------------------------------
+const db = null; 
 
 // ============================================================================
 // 1. UTILS CONFIG (Consolidated)
