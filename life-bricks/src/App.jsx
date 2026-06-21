@@ -1,28 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { collection, getDocs, doc, setDoc, query, where, addDoc, updateDoc, deleteDoc, getFirestore } from 'firebase/firestore';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 
-// ============================================================================
-// 👉 FIREBASE CONNECTION
-// ============================================================================
-// To fix the preview window crash, we have temporarily inlined the database connection.
-// IMPORTANT: When pasting this back into StackBlitz, DELETE lines 13-26 and uncomment line 11!
+// 👉 UNCOMMENT THE LINE BELOW when pasting into StackBlitz/Vercel!
 // import { db } from './firebase'; 
 
+// 👉 DELETE THIS TEMPORARY BLOCK when pasting into StackBlitz!
 let db;
-let auth;
-let appId = 'default-app-id';
 try {
   const firebaseConfig = typeof __firebase_config !== 'undefined' 
     ? JSON.parse(__firebase_config) 
     : { apiKey: "demo", projectId: "demo" };
   const app = initializeApp(firebaseConfig);
   db = getFirestore(app);
-  auth = getAuth(app);
-  if (typeof __app_id !== 'undefined') {
-    appId = __app_id;
-  }
 } catch (error) {
   console.warn("Firebase initialization failed.", error);
 }
@@ -32,10 +22,9 @@ try {
 // ============================================================================
 
 const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-const isCanvas = typeof window !== 'undefined' && window.location.protocol === 'blob:';
 
 const CONFIG = {
-  coziUrl: isCanvas ? 'https://example.com/mock.ics' : (isLocal ? '/cozi-calendar.ics' : '/api/cozi'), 
+  coziUrl: isLocal ? '/cozi-calendar.ics' : '/api/cozi', 
   pixelsPerMinute: 2,
   dayStartHour: 7,
   totalHours: 15,
@@ -348,7 +337,6 @@ export function EnrichmentModal({
 
 function App() {
   const [currentDate, setCurrentDate] = useState(getLocalDateString());
-  const [user, setUser] = useState(null);
   const [coziEvents, setCoziEvents] = useState([]);
   const [customEvents, setCustomEvents] = useState([]);
   const [enrichments, setEnrichments] = useState({});
@@ -373,34 +361,16 @@ function App() {
   };
 
   useEffect(() => {
-    if (!auth) return;
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (err) {
-        console.error("Auth error:", err);
-      }
-    };
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    if (!db || !user) return; // Prevent queries if Firebase is uninitialized or user is not logged in
+    if (!db) return; 
     
     const fetchEverything = async () => {
       try {
-        const venueSnap = await getDocs(collection(db, 'artifacts', appId, 'users', user.uid, "venues"));
+        const venueSnap = await getDocs(collection(db, "venues"));
         setVenues(venueSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       } catch (err) { console.error(err); }
 
       try {
-        const q = query(collection(db, 'artifacts', appId, 'users', user.uid, "enrichments"), where("date", "==", currentDate));
+        const q = query(collection(db, "enrichments"), where("date", "==", currentDate));
         const querySnapshot = await getDocs(q);
         const enrichMap = {};
         querySnapshot.forEach((doc) => {
@@ -411,16 +381,12 @@ function App() {
       } catch (err) { console.error(err); }
 
       try {
-        const customQ = query(collection(db, 'artifacts', appId, 'users', user.uid, "custom_bricks"), where("date", "==", currentDate));
+        const customQ = query(collection(db, "custom_bricks"), where("date", "==", currentDate));
         const customSnap = await getDocs(customQ);
         setCustomEvents(customSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       } catch (err) { console.error(err); }
 
       try {
-        if (!CONFIG.coziUrl.startsWith('http') && window.location.protocol === 'blob:') {
-           // Skip fetching if running in the preview window with relative URL to prevent errors
-           return;
-        }
         const res = await fetch(CONFIG.coziUrl);
         const rawText = await res.text();
         if (!rawText || !rawText.includes("BEGIN:VCALENDAR")) return;
@@ -506,22 +472,21 @@ function App() {
       } catch (err) { console.error("🚨 FATAL FETCH ERROR:", err); }
     };
     fetchEverything();
-  }, [currentDate, user]);
+  }, [currentDate]);
 
   const handleSaveCustomBrick = async () => { 
     if (!customDraft.title) return alert("Enter a title");
-    if (!user) return alert("Please wait for authentication to finish.");
     try {
       const safeDraft = { 
         ...customDraft, location: customDraft.location || '', notes: customDraft.notes || '', errandTitle: customDraft.errandTitle || '', travelTime: Number(customDraft.travelTime) || 0, arrivalBuffer: Number(customDraft.arrivalBuffer) || 0, errandDuration: Number(customDraft.errandDuration) || 0, hasReturnErrand: !!customDraft.hasReturnErrand, isChained: !!customDraft.isChained
       };
       if (customDraft.id) {
-        const docRef = doc(db, 'artifacts', appId, 'users', user.uid, "custom_bricks", customDraft.id);
+        const docRef = doc(db, "custom_bricks", customDraft.id);
         await updateDoc(docRef, safeDraft);
         setCustomEvents(customEvents.map(ev => ev.id === customDraft.id ? { ...safeDraft } : ev));
       } else {
         const newEvent = { ...safeDraft, date: currentDate, color: 'custom' };
-        const docRef = await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, "custom_bricks"), newEvent);
+        const docRef = await addDoc(collection(db, "custom_bricks"), newEvent);
         setCustomEvents([...customEvents, { id: docRef.id, ...newEvent }]);
       }
       setIsCustomModalOpen(false);
@@ -531,9 +496,8 @@ function App() {
 
   const handleDeleteCustomBrick = async (id) => {
     if (!window.confirm("Delete this custom brick?")) return;
-    if (!user) return;
     try {
-      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, "custom_bricks", id));
+      await deleteDoc(doc(db, "custom_bricks", id));
       setCustomEvents(customEvents.filter(ev => ev.id !== id));
       setIsCustomModalOpen(false);
       setCustomDraft({ title: '', start: '16:00', end: '17:00', notes: '', isChained: false });
@@ -574,7 +538,6 @@ function App() {
 
   const handleSaveEnrichment = async () => { 
     if (!selectedCozi) return;
-    if (!user) return alert("Please wait for authentication to finish.");
     let listToSave = [...subEventsList];
     if (draftEvent.title && draftEvent.title.trim() !== '') {
       const safeDraft = { ...draftEvent, location: draftEvent.location || '', notes: draftEvent.notes || '', errandTitle: draftEvent.errandTitle || '', travelTime: Number(draftEvent.travelTime) || 0, arrivalBuffer: Number(draftEvent.arrivalBuffer) || 0, errandDuration: Number(draftEvent.errandDuration) || 0, hasReturnErrand: !!draftEvent.hasReturnErrand, isChained: !!draftEvent.isChained };
@@ -584,7 +547,7 @@ function App() {
     const safeLabel = selectedCozi.label.replace(/[^a-zA-Z0-9]/g, '_');
     const docId = `${currentDate}_${safeLabel}_override`;
     try {
-      await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, "enrichments", docId), { date: currentDate, coziRef: selectedCozi.label, subEvents: listToSave });
+      await setDoc(doc(db, "enrichments", docId), { date: currentDate, coziRef: selectedCozi.label, subEvents: listToSave });
       setEnrichments(prev => ({ ...prev, [selectedCozi.label]: listToSave }));
       setSelectedCozi(null); 
     } catch (error) { alert("Failed to save."); }
@@ -592,11 +555,10 @@ function App() {
 
   const handleSaveNewVenue = async () => {
     if (!venueForm.id || !venueForm.name) return alert("Please provide a short ID and a Display Name.");
-    if (!user) return alert("Please wait for authentication to finish.");
     const cleanId = venueForm.id.toLowerCase().replace(/[^a-z0-9]/g, '_');
     const defaultMins = Number(venueForm.defaultTravelMins) || 0; 
     try {
-      await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, "venues", cleanId), { name: venueForm.name, mapsLink: venueForm.mapsLink, defaultTravelMins: defaultMins });
+      await setDoc(doc(db, "venues", cleanId), { name: venueForm.name, mapsLink: venueForm.mapsLink, defaultTravelMins: defaultMins });
       setVenues(prevVenues => {
         const venueExists = prevVenues.some(v => v.id === cleanId);
         if (venueExists) { return prevVenues.map(v => v.id === cleanId ? { id: cleanId, name: venueForm.name, mapsLink: venueForm.mapsLink, defaultTravelMins: defaultMins } : v); } 
