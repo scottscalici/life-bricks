@@ -1,0 +1,21 @@
+// Cloudflare Worker that serves Life Bricks and its Cozi helper (worker.js).
+// Cloudflare builds it from GitHub (Workers Builds) with root directory
+// "life-bricks", build command "npm run build" and deploy command
+// "npx wrangler deploy": main goes live, other branches get a preview URL.
+{
+  "name": "life-bricks",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    // Send /api/* to worker.js even when the request looks like a page visit.
+    "run_worker_first": ["/api/*"]
+  },
+  "workers_dev": true,
+  "preview_urls": true,
+  // COZI_FEED_URL and DASHBOARD_KEY are secrets set in the Cloudflare dashboard;
+  // keep them on each deploy. The VITE_* values are build variables there.
+  "keep_vars": true
+}
