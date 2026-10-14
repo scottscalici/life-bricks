@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { collection, getDocs, doc, setDoc, query, where, addDoc, updateDoc, deleteDoc } from 'firebase/firestore'
 import { db } from './firebase'
-import { CONFIG, addMinutes, subtractMinutes, getLocalDateString } from './utils'
+import { CONFIG, addMinutes, subtractMinutes, getLocalDateString, fetchCozi } from './utils'
 import Brick from './components/Brick'
 import { CustomBrickModal, EnrichmentModal } from './components/Modals'
 
@@ -55,7 +55,7 @@ function App() {
       } catch (err) { console.error(err); }
 
       try {
-        const res = await fetch(CONFIG.coziUrl);
+        const res = await fetchCozi();
         const rawText = await res.text();
         if (!rawText || !rawText.includes("BEGIN:VCALENDAR")) return;
         const cleanText = rawText.replace(/\r?\n[ \t]/g, '');

@@ -1,11 +1,32 @@
 export const CONFIG = {
-  // If we are testing locally in Vite, use the full URL. If on Vercel, use the relative API path.
-  coziUrl: import.meta.env.DEV ? '/api/cozi' : '/api/cozi', 
+  // Served by worker.js, which keeps the Cozi link as a Cloudflare secret.
+  coziUrl: '/api/cozi',
   pixelsPerMinute: 2,
   dayStartHour: 7,
   totalHours: 15,
   weatherApiKey: import.meta.env.VITE_WEATHER_API_KEY || ''
 };
+
+// The passphrase matches the DASHBOARD_KEY secret in Cloudflare; this browser
+// asks for it once. A wrong or changed one gets a 401: ask again and retry once.
+function getDashboardKey(message = 'Life Bricks passphrase (for Cozi):') {
+  let key = localStorage.getItem('dashboard_key');
+  if (!key) {
+    key = prompt(message);
+    if (key) localStorage.setItem('dashboard_key', key.trim());
+  }
+  return key;
+}
+
+export async function fetchCozi() {
+  const send = () => fetch(CONFIG.coziUrl, { headers: { 'X-Dashboard-Key': getDashboardKey() || '' } });
+  let res = await send();
+  if (res.status === 401) {
+    localStorage.removeItem('dashboard_key');
+    if (getDashboardKey("That passphrase didn't work. Life Bricks passphrase:")) res = await send();
+  }
+  return res;
+}
   
   export function getMinutesFromStart(timeStr) {
     if (!timeStr || !timeStr.includes(':')) return 0;
